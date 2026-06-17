@@ -33,4 +33,9 @@ step and no dependencies. Open it directly in a browser to run it locally.
 
 The site is published to GitHub Pages by
 [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml) on
-every push to `main`. The workflow enables Pages automatically on its first run.
+every push to `main`.
+
+**One-time setup:** in the repository's **Settings → Pages → Build and
+deployment**, set **Source** to **GitHub Actions**. GitHub does not allow the
+workflow's token to enable Pages on its own, so this switch has to be flipped
+once by a repo admin. After that, every push to `main` redeploys automatically.
