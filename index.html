@@ -123,7 +123,7 @@
   .btn.accent:hover{background:var(--accent-ink)}
   .btn.ghost{font-weight:500;color:var(--muted)}
 
-  .chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px;min-height:4px}
+  .chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px;min-height:4px;max-height:220px;overflow-y:auto}
   .chip{
     display:inline-flex;align-items:center;gap:7px;
     background:#F1F2F4;border:1px solid var(--line);border-radius:999px;
@@ -227,11 +227,6 @@
       <textarea class="paste" id="pasteBox" placeholder="Paste the report card HTML here…" style="display:none;margin-top:10px"></textarea>
       <div id="pasteActions" style="display:none;margin-top:8px">
         <button class="btn primary" id="usePaste">Use pasted HTML</button>
-      </div>
-      <div id="cssRow" style="display:none;margin-top:10px">
-        <button type="button" class="btn ghost" id="cssBtn">Load this report's style folder</button>
-        <input type="file" id="cssFile" accept=".css,text/css" multiple webkitdirectory hidden>
-        <p class="hint" id="cssStatus" style="margin-top:6px"></p>
       </div>
     </div>
 
@@ -349,9 +344,7 @@
   var terms = [];            // {term, hits}
   var view = "orig";
   var lastSelection = "";
-  var lastStudents = [];     // most recent auto-detected student names {name, id}
-  var rawSrc = "";           // the document exactly as loaded
-  var cssFiles = {};         // basename -> CSS text, for inlining the report's stylesheets
+  var lastStudents = [];     // most recent auto-detected student names {name, paren, kind}
 
   var $ = function(id){ return document.getElementById(id); };
   var parser = new DOMParser();
@@ -384,111 +377,60 @@
     try { return new RegExp(pat, "g"); } catch(e){ return new RegExp(esc, "g"); }
   }
 
-  // a student name is a "Last, First [Middle]" immediately followed by a parenthesised
-  // ID, e.g. "Smith, John (123456789)". That trailing ID is what tells a student apart
-  // from a teacher, and the pattern holds in both the by-student and by-class exports.
-  var STUDENT_SRC = "([A-Za-z\\u00C0-\\u017F][\\w\\u00C0-\\u017F'\\u2019.\\-]*\\s*,\\s*[A-Za-z\\u00C0-\\u017F][\\w\\u00C0-\\u017F'\\u2019.\\-]*(?:\\s+[A-Za-z\\u00C0-\\u017F][\\w\\u00C0-\\u017F'\\u2019.\\-]*){0,3})\\s*\\(\\s*(\\d{4,})\\s*\\)";
+  // A student-name cell is a whole text node shaped like "<name> (<paren>)", where the
+  // parenthetical is either a 4+ digit ID or a short nickname. Capturing the ENTIRE name
+  // (not a fixed First/Last shape) keeps particles, prefixes, surname-first ordering and
+  // 3+ tokens — the leading fragments Bug 1 used to leave behind.
+  var NAME_TOKEN = "[A-Za-z\\u00C0-\\u017F][\\w\\u00C0-\\u017F'\\u2019.\\-]*";
+  var STUDENT_CELL = new RegExp("^(" + NAME_TOKEN + "(?:[ ,]+" + NAME_TOKEN + "){0,6})\\s*[(\\uFF08]\\s*([^()\\uFF08\\uFF09]{1,30}?)\\s*[)\\uFF09]$");
+  function parenKind(p){
+    if(/^\d{4,}$/.test(p)) return "id";                                            // student ID
+    if(new RegExp("^" + NAME_TOKEN + "(?:\\s+" + NAME_TOKEN + ")?$").test(p)) return "nick"; // preferred name
+    return "";
+  }
   function detectStudents(nodes){
-    var found=[], seen={}, re=new RegExp(STUDENT_SRC, "g"), m;
+    var found=[], seen={};
     nodes.forEach(function(node){
-      re.lastIndex = 0;
-      while((m = re.exec(node.nodeValue))){
-        var name = m[1].replace(/\s+/g," ").trim(), key = name.toLowerCase();
-        if(!seen[key]){ seen[key]=1; found.push({name:name, id:m[2]}); }
-      }
+      var t = node.nodeValue.replace(/\s+/g," ").trim();
+      var m = STUDENT_CELL.exec(t); if(!m) return;
+      var name = m[1].trim(), paren = m[2].trim(), kind = parenKind(paren);
+      if(!kind) return;
+      if(kind === "nick" && name.split(/[\s,]+/).filter(Boolean).length < 2) return;  // skip e.g. "Science (Honors)"
+      var key = (name + "|" + paren).toLowerCase();
+      if(!seen[key]){ seen[key]=1; found.push({name:name, paren:paren, kind:kind}); }
     });
     return found;
   }
-  // every distinct term that identifies one student: the header name, its last & first
-  // parts (comments tend to use the first name alone) and the ID number.
+  // every distinct term that identifies one student: the whole name (matched first so the
+  // cell collapses to a single [STUDENT]), each individual token — which catches comment
+  // mentions like "Rashad", leading particles and hyphenated parts — and any nickname.
+  // The ID number is left out on purpose; the fixed-length-number tool blanks that.
   function studentTerms(s){
-    var out=[s.name], comma=s.name.indexOf(",");
-    if(comma>-1){
-      var last=s.name.slice(0,comma).trim();
-      var first=(s.name.slice(comma+1).trim().split(/\s+/)[0])||"";
-      if(last) out.push(last);
-      if(first) out.push(first);
+    var out = [s.name], seen = {};
+    seen[s.name.toLowerCase()] = 1;
+    function add(t){
+      t = t.replace(/^[\s.'’\-]+|[\s.'’\-]+$/g, "");
+      var k = t.toLowerCase();
+      if(t.length >= 2 && !seen[k]){ seen[k] = 1; out.push(t); }
     }
-    if(s.id) out.push(s.id);
+    s.name.split(/[\s,]+/).forEach(function(tok){
+      add(tok);
+      tok.split(/[\-‐-―]/).forEach(add);   // also hyphen-separated parts
+    });
+    if(s.kind === "nick"){ s.paren.split(/[\s,]+/).forEach(add); }
     return out;
   }
 
-  /* ---------- inlining the report's external stylesheets ---------- */
-  // "<link href='./x_files/foo.css'>" is matched to a loaded file by its base name
-  function linkBase(link){
-    var base = (link.getAttribute("href") || "").split(/[?#]/)[0].split("/").pop();
-    try { base = decodeURIComponent(base); } catch(e){}
-    return base;
-  }
-  function inlineStyles(html){
-    if(!html || !Object.keys(cssFiles).length) return html;
-    var d = parser.parseFromString(html, "text/html");
-    d.querySelectorAll('link[rel~="stylesheet"][href]').forEach(function(link){
-      var base = linkBase(link);
-      if(Object.prototype.hasOwnProperty.call(cssFiles, base)){
-        var style = d.createElement("style");
-        style.textContent = cssFiles[base];
-        var media = link.getAttribute("media"); if(media) style.setAttribute("media", media);
-        link.parentNode.replaceChild(style, link);
-      }
-    });
-    return "<!DOCTYPE html>\n" + d.documentElement.outerHTML;
-  }
-  function cssReport(){
-    if(!rawSrc) return {matched:0, total:0};
-    var links = parser.parseFromString(rawSrc, "text/html").querySelectorAll('link[rel~="stylesheet"][href]'), matched = 0;
-    links.forEach(function(link){ if(Object.prototype.hasOwnProperty.call(cssFiles, linkBase(link))) matched++; });
-    return {matched:matched, total:links.length};
-  }
-  function rebuildSrc(){ srcText = inlineStyles(rawSrc); }
-
   /* ---------- loading the document ---------- */
   function loadHTML(text, name){
-    rawSrc = text || "";
-    cssFiles = {};                 // a new document starts with no inlined styles
-    rebuildSrc();
+    srcText = text || "";
     if(name) fileName = name.replace(/\.[^.]+$/,"") + ".html";
     $("drop").classList.add("loaded");
     $("drop").querySelector(".big").textContent = "Loaded: " + (name || "pasted HTML");
     $("drop").querySelector(".small").innerHTML = 'click to load a different file · <button type="button" class="linkbtn" id="pasteToggle2">paste instead</button>';
     var pt = $("pasteToggle2"); if(pt) pt.addEventListener("click", showPaste);
     $("ph").style.display = "none";
-    renderCssStatus();
     apply();
-  }
-
-  function loadCssFiles(fileList){
-    var files = [].slice.call(fileList || []).filter(function(f){ return /\.css$/i.test(f.name); });
-    if(!files.length){ toast("No .css files in that selection"); return; }
-    var remaining = files.length;
-    files.forEach(function(f){
-      var r = new FileReader();
-      r.onload = function(){ cssFiles[f.name] = String(r.result); if(--remaining===0) afterCss(); };
-      r.onerror = function(){ if(--remaining===0) afterCss(); };
-      r.readAsText(f);
-    });
-  }
-  function afterCss(){
-    rebuildSrc();
-    renderCssStatus();
-    if(rawSrc) apply();
-    var rep = cssReport();
-    toast(rep.matched + " of " + rep.total + " stylesheet" + (rep.total===1?"":"s") + " matched");
-  }
-  function renderCssStatus(){
-    var row = $("cssRow"), status = $("cssStatus"), rep = cssReport();
-    if(!rawSrc || rep.total===0){ row.style.display = "none"; return; }
-    row.style.display = "block";
-    if(rep.matched >= rep.total){
-      status.textContent = "All " + rep.total + " stylesheet" + (rep.total===1?"":"s") +
-        " inlined — the preview matches the original and the download carries its styles.";
-      status.style.color = "var(--ok)";
-    } else {
-      status.textContent = "This report links " + rep.total + " external stylesheet" + (rep.total===1?"":"s") +
-        " a hosted page can’t read. Load its “…_files” folder for an accurate preview" +
-        (rep.matched ? (" (" + rep.matched + " loaded)") : "") + ".";
-      status.style.color = "var(--muted)";
-    }
   }
 
   function readFile(f){
@@ -506,25 +448,11 @@
   drop.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); $("file").click(); } });
   drop.addEventListener("dragover", function(e){ e.preventDefault(); drop.classList.add("over"); });
   drop.addEventListener("dragleave", function(){ drop.classList.remove("over"); });
-  function handleDropped(fileList){
-    var files = [].slice.call(fileList || []);
-    var html = files.filter(function(f){ return /\.x?html?$/i.test(f.name) || f.type==="text/html"; })[0];
-    var css  = files.filter(function(f){ return /\.css$/i.test(f.name); });
-    if(html){
-      var r = new FileReader();
-      r.onload = function(){ loadHTML(String(r.result), html.name); if(css.length) loadCssFiles(css); };
-      r.readAsText(html);
-    } else if(css.length){
-      loadCssFiles(css);
-    }
-  }
   drop.addEventListener("drop", function(e){
     e.preventDefault(); drop.classList.remove("over");
-    handleDropped(e.dataTransfer.files);
+    if(e.dataTransfer.files && e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]);
   });
   $("file").addEventListener("change", function(e){ readFile(e.target.files[0]); });
-  $("cssBtn").addEventListener("click", function(){ $("cssFile").click(); });
-  $("cssFile").addEventListener("change", function(e){ loadCssFiles(e.target.files); e.target.value=""; });
 
   function showPaste(){
     $("pasteBox").style.display = "block";
@@ -603,14 +531,14 @@
     list.forEach(function(s){
       var chip = document.createElement("span"); chip.className = "chip";
       var txt = document.createElement("span"); txt.className = "txt";
-      txt.textContent = s.name; txt.title = s.name + "  ·  ID " + s.id;
+      txt.textContent = s.name; txt.title = s.name + (s.kind==="nick" ? "  ·  (" + s.paren + ")" : "  ·  ID " + s.paren);
       chip.appendChild(txt);
       box.appendChild(chip);
     });
     $("studentN").textContent = list.length;
     var empty = $("studentEmpty");
     empty.style.display = list.length ? "none" : "block";
-    empty.textContent = srcText ? "No student names detected (looking for “Last, First (ID)”)." : "Load a document to detect student names.";
+    empty.textContent = srcText ? "No student names detected." : "Load a document to detect student names.";
     $("addStudents").style.display = list.length ? "block" : "none";
   }
 
