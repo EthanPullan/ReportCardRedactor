@@ -276,6 +276,13 @@
     </div>
 
     <div class="block">
+      <p class="label">2d · Detected · student names <span class="n" id="studentN">0</span></p>
+      <div class="chips" id="studentChips"></div>
+      <p class="empty" id="studentEmpty">Load a document to detect student names.</p>
+      <button class="btn accent" id="addStudents" style="width:100%;margin-top:10px;display:none">Add all student names to list</button>
+    </div>
+
+    <div class="block">
       <p class="label">3 · How to replace</p>
       <div class="opts">
         <div class="optrow">
@@ -337,6 +344,7 @@
   var terms = [];            // {term, hits}
   var view = "orig";
   var lastSelection = "";
+  var lastStudents = [];     // most recent auto-detected student names {name, id}
 
   var $ = function(id){ return document.getElementById(id); };
   var parser = new DOMParser();
@@ -367,6 +375,35 @@
     if(/^[A-Za-z0-9_]/.test(name)) pat = "(?<![A-Za-z0-9_])" + pat;
     if(/[A-Za-z0-9_]$/.test(name)) pat = pat + "(?![A-Za-z0-9_])";
     try { return new RegExp(pat, "g"); } catch(e){ return new RegExp(esc, "g"); }
+  }
+
+  // a student name is a "Last, First [Middle]" immediately followed by a parenthesised
+  // ID, e.g. "Smith, John (123456789)". That trailing ID is what tells a student apart
+  // from a teacher, and the pattern holds in both the by-student and by-class exports.
+  var STUDENT_SRC = "([A-Za-z\\u00C0-\\u017F][\\w\\u00C0-\\u017F'\\u2019.\\-]*\\s*,\\s*[A-Za-z\\u00C0-\\u017F][\\w\\u00C0-\\u017F'\\u2019.\\-]*(?:\\s+[A-Za-z\\u00C0-\\u017F][\\w\\u00C0-\\u017F'\\u2019.\\-]*){0,3})\\s*\\(\\s*(\\d{4,})\\s*\\)";
+  function detectStudents(nodes){
+    var found=[], seen={}, re=new RegExp(STUDENT_SRC, "g"), m;
+    nodes.forEach(function(node){
+      re.lastIndex = 0;
+      while((m = re.exec(node.nodeValue))){
+        var name = m[1].replace(/\s+/g," ").trim(), key = name.toLowerCase();
+        if(!seen[key]){ seen[key]=1; found.push({name:name, id:m[2]}); }
+      }
+    });
+    return found;
+  }
+  // every distinct term that identifies one student: the header name, its last & first
+  // parts (comments tend to use the first name alone) and the ID number.
+  function studentTerms(s){
+    var out=[s.name], comma=s.name.indexOf(",");
+    if(comma>-1){
+      var last=s.name.slice(0,comma).trim();
+      var first=(s.name.slice(comma+1).trim().split(/\s+/)[0])||"";
+      if(last) out.push(last);
+      if(first) out.push(first);
+    }
+    if(s.id) out.push(s.id);
+    return out;
   }
 
   /* ---------- loading the document ---------- */
@@ -472,6 +509,24 @@
     $("teacherN").textContent = list.length;
   }
 
+  function renderStudentChips(list){
+    lastStudents = list;
+    var box = $("studentChips");
+    box.innerHTML = "";
+    list.forEach(function(s){
+      var chip = document.createElement("span"); chip.className = "chip";
+      var txt = document.createElement("span"); txt.className = "txt";
+      txt.textContent = s.name; txt.title = s.name + "  ·  ID " + s.id;
+      chip.appendChild(txt);
+      box.appendChild(chip);
+    });
+    $("studentN").textContent = list.length;
+    var empty = $("studentEmpty");
+    empty.style.display = list.length ? "none" : "block";
+    empty.textContent = srcText ? "No student names detected (looking for “Last, First (ID)”)." : "Load a document to detect student names.";
+    $("addStudents").style.display = list.length ? "block" : "none";
+  }
+
   $("addBtn").addEventListener("click", function(){
     addTerms($("termInput").value); $("termInput").value=""; $("termInput").focus();
   });
@@ -507,6 +562,20 @@
   });
   $("teacherToken").addEventListener("input", apply);
   $("teacherReset").addEventListener("click", function(){ ignoredTeachers = {}; apply(); });
+
+  $("addStudents").addEventListener("click", function(){
+    var added = 0;
+    lastStudents.forEach(function(s){
+      studentTerms(s).forEach(function(term){
+        term = String(term).trim();
+        if(!term) return;
+        var exists = terms.some(function(t){ return t.term.toLowerCase() === term.toLowerCase(); });
+        if(!exists){ terms.push({term:term, hits:0}); added++; }
+      });
+    });
+    if(added){ renderChips(); apply(); }
+    toast(added ? ("Added " + added + " student term" + (added===1?"":"s")) : "Those student terms are already in the list");
+  });
 
   function replacementFor(matched){
     var s = $("style").value;
@@ -548,7 +617,7 @@
     // returns {doc, html, digitHits, teacherList, teacherHits}; also fills hit counts
     var doc = parser.parseFromString(srcText || "<html><body></body></html>", "text/html");
     terms.forEach(function(t){ t.hits = 0; });
-    var digitHits = 0, teacherHits = 0, teacherList = [];
+    var digitHits = 0, teacherHits = 0, teacherList = [], studentList = [];
     if(srcText){
       var nodes = textNodesOf(doc.body);
 
@@ -558,6 +627,9 @@
           if(!ignoredTeachers[name.toLowerCase()]) teacherList.push({name:name, hits:0});
         });
       }
+
+      // detect student names (a name followed by an ID) to offer as one-click adds
+      studentList = detectStudents(nodes);
 
       // 1) your typed/imported terms (longest first)
       var ordered = terms.slice().sort(function(a,b){ return b.term.length - a.term.length; });
@@ -595,7 +667,7 @@
       }
     }
     var html = "<!DOCTYPE html>\n" + doc.documentElement.outerHTML;
-    return {doc:doc, html:html, digitHits:digitHits, teacherList:teacherList, teacherHits:teacherHits};
+    return {doc:doc, html:html, digitHits:digitHits, teacherList:teacherList, teacherHits:teacherHits, studentList:studentList};
   }
 
   function sanitizedSrcDoc(html){
@@ -627,6 +699,7 @@
     $("sHits").textContent = total;
     $("sZero").textContent = zero;
     renderTeacherChips(r.teacherList);
+    renderStudentChips(r.studentList);
     if($("digitOn").checked){
       var N = parseInt($("digitN").value,10) || 0;
       $("digitFound").textContent = r.digitHits
