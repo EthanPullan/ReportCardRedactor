@@ -247,11 +247,11 @@
 
     <div class="block">
       <p class="label">2b · Student numbers</p>
-      <label class="switch"><input type="checkbox" id="digitOn"><span class="track"></span><span>Blank out every fixed-length number</span></label>
+      <label class="switch"><input type="checkbox" id="digitOn"><span class="track"></span><span>Blank out numbers within a length range</span></label>
       <div id="digitOpts" style="display:none;margin-top:11px">
         <div class="optrow">
           <span>Number length</span>
-          <span><input type="number" id="digitN" min="1" max="20" value="9" style="width:64px"> digits</span>
+          <span><input type="number" id="digitMin" min="1" max="20" value="9" style="width:52px"> to <input type="number" id="digitMax" min="1" max="20" value="10" style="width:52px"> digits</span>
         </div>
         <div class="addrow" style="margin-top:9px">
           <span style="font-size:13px;color:var(--muted);align-self:center;white-space:nowrap">Replace with</span>
@@ -569,7 +569,8 @@
     $("digitOpts").style.display = this.checked ? "block" : "none";
     apply();
   });
-  $("digitN").addEventListener("input", apply);
+  $("digitMin").addEventListener("input", apply);
+  $("digitMax").addEventListener("input", apply);
   $("digitToken").addEventListener("input", apply);
   $("teacherOn").addEventListener("change", function(){
     $("teacherOpts").style.display = this.checked ? "block" : "none";
@@ -668,15 +669,19 @@
         });
       });
 
-      // 3) fixed-length numbers
+      // 3) numbers whose digit-length falls within [lo, hi]
       if($("digitOn").checked){
-        var N = parseInt($("digitN").value, 10);
-        if(N >= 1 && N <= 20){
+        var lo = parseInt($("digitMin").value, 10), hi = parseInt($("digitMax").value, 10);
+        if(isNaN(lo)) lo = hi;
+        if(isNaN(hi)) hi = lo;
+        if(lo > hi){ var t0 = lo; lo = hi; hi = t0; }   // tolerate a reversed range
+        lo = Math.max(1, lo);
+        if(lo <= hi){
           var tok = $("digitToken").value || "[STUDENT ID]";
           nodes.forEach(function(node){
-            // grab each maximal run of digits, swap only the ones exactly N long
+            // swap each maximal run of digits whose length is within the range
             node.nodeValue = node.nodeValue.replace(/\d+/g, function(m){
-              if(m.length === N){ digitHits++; return tok; }
+              if(m.length >= lo && m.length <= hi){ digitHits++; return tok; }
               return m;
             });
           });
@@ -718,11 +723,21 @@
     renderTeacherChips(r.teacherList);
     renderStudentChips(r.studentList);
     if($("digitOn").checked){
-      var N = parseInt($("digitN").value,10) || 0;
-      $("digitFound").textContent = r.digitHits
-        ? r.digitHits + " number" + (r.digitHits===1?"":"s") + " of " + N + " digits blanked"
-        : "No " + N + "-digit numbers found";
-      $("digitFound").style.color = r.digitHits ? "var(--ok)" : "var(--danger)";
+      var lo = parseInt($("digitMin").value,10), hi = parseInt($("digitMax").value,10);
+      if(isNaN(lo)) lo = hi;
+      if(isNaN(hi)) hi = lo;
+      if(lo > hi){ var t0 = lo; lo = hi; hi = t0; }
+      lo = Math.max(1, lo);
+      if(isNaN(lo) || isNaN(hi)){
+        $("digitFound").textContent = "Enter a digit length (or range) to blank.";
+        $("digitFound").style.color = "var(--muted)";
+      } else {
+        var lenLabel = lo===hi ? (lo + "-digit") : (lo + "–" + hi + " digit");
+        $("digitFound").textContent = r.digitHits
+          ? r.digitHits + " " + lenLabel + " number" + (r.digitHits===1?"":"s") + " blanked"
+          : "No " + lenLabel + " numbers found";
+        $("digitFound").style.color = r.digitHits ? "var(--ok)" : "var(--danger)";
+      }
     }
     renderChips();
     $("downloadBtn").disabled = total===0;

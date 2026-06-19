@@ -17,7 +17,7 @@ uploaded, and nothing is stored.
   nickname to the list with one button — so mentions in comment text are caught
   too. (The 9-digit ID itself is handled by the number-blanking option.)
 - **Auto-suggest teacher names** written in `Last, First` format.
-- **Blank fixed-length numbers** (for example, 9-digit student IDs).
+- **Blank numbers within a length range** (for example, 9–10-digit student IDs).
 - **Choose the replacement** style: `[REDACTED]`, `[NAME]`, `[STUDENT]`, a solid
   black bar, stars, or your own custom text.
 - **Preview** original vs. redacted, then **download** or **copy** a clean copy.
