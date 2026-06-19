@@ -228,6 +228,11 @@
       <div id="pasteActions" style="display:none;margin-top:8px">
         <button class="btn primary" id="usePaste">Use pasted HTML</button>
       </div>
+      <div id="cssRow" style="display:none;margin-top:10px">
+        <button type="button" class="btn ghost" id="cssBtn">Load this report's style folder</button>
+        <input type="file" id="cssFile" accept=".css,text/css" multiple webkitdirectory hidden>
+        <p class="hint" id="cssStatus" style="margin-top:6px"></p>
+      </div>
     </div>
 
     <div class="block">
@@ -345,6 +350,8 @@
   var view = "orig";
   var lastSelection = "";
   var lastStudents = [];     // most recent auto-detected student names {name, id}
+  var rawSrc = "";           // the document exactly as loaded
+  var cssFiles = {};         // basename -> CSS text, for inlining the report's stylesheets
 
   var $ = function(id){ return document.getElementById(id); };
   var parser = new DOMParser();
@@ -406,16 +413,82 @@
     return out;
   }
 
+  /* ---------- inlining the report's external stylesheets ---------- */
+  // "<link href='./x_files/foo.css'>" is matched to a loaded file by its base name
+  function linkBase(link){
+    var base = (link.getAttribute("href") || "").split(/[?#]/)[0].split("/").pop();
+    try { base = decodeURIComponent(base); } catch(e){}
+    return base;
+  }
+  function inlineStyles(html){
+    if(!html || !Object.keys(cssFiles).length) return html;
+    var d = parser.parseFromString(html, "text/html");
+    d.querySelectorAll('link[rel~="stylesheet"][href]').forEach(function(link){
+      var base = linkBase(link);
+      if(Object.prototype.hasOwnProperty.call(cssFiles, base)){
+        var style = d.createElement("style");
+        style.textContent = cssFiles[base];
+        var media = link.getAttribute("media"); if(media) style.setAttribute("media", media);
+        link.parentNode.replaceChild(style, link);
+      }
+    });
+    return "<!DOCTYPE html>\n" + d.documentElement.outerHTML;
+  }
+  function cssReport(){
+    if(!rawSrc) return {matched:0, total:0};
+    var links = parser.parseFromString(rawSrc, "text/html").querySelectorAll('link[rel~="stylesheet"][href]'), matched = 0;
+    links.forEach(function(link){ if(Object.prototype.hasOwnProperty.call(cssFiles, linkBase(link))) matched++; });
+    return {matched:matched, total:links.length};
+  }
+  function rebuildSrc(){ srcText = inlineStyles(rawSrc); }
+
   /* ---------- loading the document ---------- */
   function loadHTML(text, name){
-    srcText = text || "";
+    rawSrc = text || "";
+    cssFiles = {};                 // a new document starts with no inlined styles
+    rebuildSrc();
     if(name) fileName = name.replace(/\.[^.]+$/,"") + ".html";
     $("drop").classList.add("loaded");
     $("drop").querySelector(".big").textContent = "Loaded: " + (name || "pasted HTML");
     $("drop").querySelector(".small").innerHTML = 'click to load a different file · <button type="button" class="linkbtn" id="pasteToggle2">paste instead</button>';
     var pt = $("pasteToggle2"); if(pt) pt.addEventListener("click", showPaste);
     $("ph").style.display = "none";
+    renderCssStatus();
     apply();
+  }
+
+  function loadCssFiles(fileList){
+    var files = [].slice.call(fileList || []).filter(function(f){ return /\.css$/i.test(f.name); });
+    if(!files.length){ toast("No .css files in that selection"); return; }
+    var remaining = files.length;
+    files.forEach(function(f){
+      var r = new FileReader();
+      r.onload = function(){ cssFiles[f.name] = String(r.result); if(--remaining===0) afterCss(); };
+      r.onerror = function(){ if(--remaining===0) afterCss(); };
+      r.readAsText(f);
+    });
+  }
+  function afterCss(){
+    rebuildSrc();
+    renderCssStatus();
+    if(rawSrc) apply();
+    var rep = cssReport();
+    toast(rep.matched + " of " + rep.total + " stylesheet" + (rep.total===1?"":"s") + " matched");
+  }
+  function renderCssStatus(){
+    var row = $("cssRow"), status = $("cssStatus"), rep = cssReport();
+    if(!rawSrc || rep.total===0){ row.style.display = "none"; return; }
+    row.style.display = "block";
+    if(rep.matched >= rep.total){
+      status.textContent = "All " + rep.total + " stylesheet" + (rep.total===1?"":"s") +
+        " inlined — the preview matches the original and the download carries its styles.";
+      status.style.color = "var(--ok)";
+    } else {
+      status.textContent = "This report links " + rep.total + " external stylesheet" + (rep.total===1?"":"s") +
+        " a hosted page can’t read. Load its “…_files” folder for an accurate preview" +
+        (rep.matched ? (" (" + rep.matched + " loaded)") : "") + ".";
+      status.style.color = "var(--muted)";
+    }
   }
 
   function readFile(f){
@@ -433,11 +506,25 @@
   drop.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); $("file").click(); } });
   drop.addEventListener("dragover", function(e){ e.preventDefault(); drop.classList.add("over"); });
   drop.addEventListener("dragleave", function(){ drop.classList.remove("over"); });
+  function handleDropped(fileList){
+    var files = [].slice.call(fileList || []);
+    var html = files.filter(function(f){ return /\.x?html?$/i.test(f.name) || f.type==="text/html"; })[0];
+    var css  = files.filter(function(f){ return /\.css$/i.test(f.name); });
+    if(html){
+      var r = new FileReader();
+      r.onload = function(){ loadHTML(String(r.result), html.name); if(css.length) loadCssFiles(css); };
+      r.readAsText(html);
+    } else if(css.length){
+      loadCssFiles(css);
+    }
+  }
   drop.addEventListener("drop", function(e){
     e.preventDefault(); drop.classList.remove("over");
-    if(e.dataTransfer.files && e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]);
+    handleDropped(e.dataTransfer.files);
   });
   $("file").addEventListener("change", function(e){ readFile(e.target.files[0]); });
+  $("cssBtn").addEventListener("click", function(){ $("cssFile").click(); });
+  $("cssFile").addEventListener("change", function(e){ loadCssFiles(e.target.files); e.target.value=""; });
 
   function showPaste(){
     $("pasteBox").style.display = "block";

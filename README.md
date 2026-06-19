@@ -11,11 +11,16 @@ uploaded, and nothing is stored.
 
 - **Load** a report card by drag-and-drop, file picker, or pasted HTML.
 - **Build a redaction list** — type terms, import a `.txt`/`.csv`, or highlight
-  text directly in the preview to add it.
+  text in either the original *or* redacted preview to add it.
+- **Auto-detect student names** (a `Last, First (ID)` in the header) and add each
+  student's full name, first, last, and ID to the list with one button.
 - **Auto-suggest teacher names** written in `Last, First` format.
 - **Blank fixed-length numbers** (for example, 9-digit student IDs).
 - **Choose the replacement** style: `[REDACTED]`, `[NAME]`, `[STUDENT]`, a solid
   black bar, stars, or your own custom text.
+- **Inline external stylesheets** — for report cards saved as a "Webpage,
+  Complete" (which link CSS from a sibling `…_files` folder), load that folder so
+  the preview is styled and the downloaded copy carries its styles inline.
 - **Preview** original vs. redacted, then **download** or **copy** a clean copy.
 
 ## Privacy
