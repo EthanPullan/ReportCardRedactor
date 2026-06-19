@@ -646,16 +646,9 @@
       // detect student names (a name followed by an ID) to offer as one-click adds
       studentList = detectStudents(nodes);
 
-      // 1) your typed/imported terms (longest first)
-      var ordered = terms.slice().sort(function(a,b){ return b.term.length - a.term.length; });
-      ordered.forEach(function(t){
-        var re = buildRegex(t.term);
-        nodes.forEach(function(node){
-          node.nodeValue = node.nodeValue.replace(re, function(m){ t.hits++; return replacementFor(m); });
-        });
-      });
-
-      // 2) suggested teacher names
+      // 1) teacher names FIRST — if a teacher shares a first/last name with a
+      //    student, this keeps the teacher's own cell as [TEACHER] instead of
+      //    letting a student token overwrite part of it (and leak the rest).
       if(teacherList.length){
         var ttok = $("teacherToken").value || "[TEACHER]";
         teacherList.forEach(function(tc){
@@ -665,6 +658,15 @@
           });
         });
       }
+
+      // 2) your typed/imported + added student terms (longest first)
+      var ordered = terms.slice().sort(function(a,b){ return b.term.length - a.term.length; });
+      ordered.forEach(function(t){
+        var re = buildRegex(t.term);
+        nodes.forEach(function(node){
+          node.nodeValue = node.nodeValue.replace(re, function(m){ t.hits++; return replacementFor(m); });
+        });
+      });
 
       // 3) fixed-length numbers
       if($("digitOn").checked){
