@@ -653,7 +653,7 @@
     [].forEach.call(this.querySelectorAll("button"), function(x){ x.classList.toggle("on", x===b); });
     $("viewHint").textContent = view==="orig"
       ? "Highlight any text in the document to add it to your list."
-      : "This is what the downloaded file will contain.";
+      : "Redacted preview — highlight anything still showing to add it too.";
     $("addsel").style.display = "none";
     renderView();
   });
@@ -665,7 +665,6 @@
     try { fdoc = $("view").contentDocument; } catch(err){ return; }
     if(!fdoc) return;
     fdoc.addEventListener("mouseup", function(){
-      if(view!=="orig"){ addSel.style.display="none"; return; }
       var sel = fdoc.getSelection();
       var s = sel ? sel.toString().trim() : "";
       if(!s){ addSel.style.display="none"; return; }
