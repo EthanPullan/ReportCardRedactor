@@ -265,10 +265,18 @@
       <p class="label">2c · Suggested · teacher names <span class="n" id="teacherN">0</span></p>
       <label class="switch"><input type="checkbox" id="teacherOn" checked><span class="track"></span><span>Auto-block names in &ldquo;Last, First&rdquo; format</span></label>
       <div id="teacherOpts" style="margin-top:11px">
-        <div class="addrow">
-          <span style="font-size:13px;color:var(--muted);align-self:center;white-space:nowrap">Replace with</span>
-          <input type="text" id="teacherToken" value="[TEACHER]">
+        <div class="optrow">
+          <span>Replace each match with</span>
+          <select id="teacherStyle">
+            <option value="teacher">[TEACHER]</option>
+            <option value="name">[NAME]</option>
+            <option value="redacted">[REDACTED]</option>
+            <option value="bar">████ black bar</option>
+            <option value="stars">**** stars</option>
+            <option value="custom">Custom…</option>
+          </select>
         </div>
+        <input type="text" id="teacherCustom" placeholder="Your replacement text" style="display:none;margin-top:9px">
         <div class="chips" id="teacherChips"></div>
         <p class="empty" id="teacherEmpty">Load a document to see suggestions.</p>
         <button type="button" class="linkbtn" id="teacherReset" style="display:none;margin-top:8px"></button>
@@ -576,7 +584,11 @@
     $("teacherOpts").style.display = this.checked ? "block" : "none";
     apply();
   });
-  $("teacherToken").addEventListener("input", apply);
+  $("teacherStyle").addEventListener("change", function(){
+    $("teacherCustom").style.display = this.value==="custom" ? "block" : "none";
+    apply();
+  });
+  $("teacherCustom").addEventListener("input", apply);
   $("teacherReset").addEventListener("click", function(){ ignoredTeachers = {}; apply(); });
 
   $("addStudents").addEventListener("click", function(){
@@ -602,6 +614,17 @@
     if(s==="stars") return "*".repeat(Math.max(matched.length,3));
     if(s==="custom") return $("customStyle").value || "[REDACTED]";
     return "[REDACTED]";
+  }
+
+  function teacherReplacementFor(matched){
+    var s = $("teacherStyle").value;
+    if(s==="teacher") return "[TEACHER]";
+    if(s==="name") return "[NAME]";
+    if(s==="redacted") return "[REDACTED]";
+    if(s==="bar") return "\u2588".repeat(Math.max(matched.length,3));
+    if(s==="stars") return "*".repeat(Math.max(matched.length,3));
+    if(s==="custom") return $("teacherCustom").value || "[TEACHER]";
+    return "[TEACHER]";
   }
 
   function buildRegex(term){
@@ -651,11 +674,10 @@
       //    student, this keeps the teacher's own cell as [TEACHER] instead of
       //    letting a student token overwrite part of it (and leak the rest).
       if(teacherList.length){
-        var ttok = $("teacherToken").value || "[TEACHER]";
         teacherList.forEach(function(tc){
           var re = nameRegex(tc.name);
           nodes.forEach(function(node){
-            node.nodeValue = node.nodeValue.replace(re, function(){ tc.hits++; teacherHits++; return ttok; });
+            node.nodeValue = node.nodeValue.replace(re, function(m){ tc.hits++; teacherHits++; return teacherReplacementFor(m); });
           });
         });
       }
